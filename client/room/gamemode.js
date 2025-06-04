@@ -315,12 +315,12 @@ function setupTeamChangeHandler() {
 // Инициализация режима
 function initGameMode() {
     // Создаем команду "Игроки"
-    gameMode.PlayersTeam = Game.Teams.Add('Players', 'Игроки', new Color(0.2, 0.6, 1, 1));
-    gameMode.PlayersTeam.Build.BlocksSet.Value = BuildBlocksSet.Blue;
+    PlayersTeam = Teams.Add('Players', 'Игроки', new Color(0.2, 0.6, 1, 1));
+    PlayersTeam.Build.BlocksSet.Value = BuildBlocksSet.Blue;
+    PlayersTeam.Spawns.SpawnPointsGroups.Add(1);
     
     // Настраиваем свойства игрока
     Players.AllProperties.push(
-        Properties.Create('Immortality', false),
         Properties.Create('ControlledBot', 0)
     );
     
@@ -337,17 +337,12 @@ function initGameMode() {
         player.Properties.Get('ControlledBot').Value = 0;
         player.Ui.Hint.Value = 'Добро пожаловать! Используйте /help для списка команд';
         
-        // Если в комнате нет точек спавна, создаем временную
-        if (gameMode.spawnPoints.length === 0) {
-            console.warn("Точки спавна не найдены! Создаю временную точку");
-            gameMode.spawnPoints.push(new Vector3(0, 10, 0));
-        }
         
         player.Spawns.Spawn();
     });
     
     // Устанавливаем стартовое сообщение
-    Game.Ui.Hint.Value = "Режим управления ботами! Используйте /bot для создания ботов";
+    player.Ui.Hint.Value = "Режим управления ботами! Используйте /bot для создания ботов";
 }
 
 // Запуск игры
