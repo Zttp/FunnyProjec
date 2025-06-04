@@ -263,31 +263,28 @@ function setupBotEventHandlers() {
 }
 
 
-
-// Инициализация режима
-function initGameMode() {
-    Teams.Add('Players', 'Игроки', new Color(0.5, 0.5, 0.5, 1));
+Teams.Add('Players', 'Игроки', new Color(0.5, 0.5, 0.5, 1));
     PlayersTeam = Teams.Get('Players');
     PlayersTeam.Spawns.SpawnPointsGroups.Add(1);
     PlayersTeam.Build.BlocksSet.Value = BuildBlocksSet.Blue;
+});
+
+// При подключении игрока - добавляем его в команду
+Players.OnPlayerConnected.Add(function(player) {
+    PlayersTeam.Add(player);
+    player.Properties.Get('ControlledBot').Value = 0;
+    player.Ui.Hint.Value = 'Добро пожаловать! Используйте /help для списка команд';
+    player.Spawns.Spawn();
+});
+// Инициализация режима
+function initGameMode() {
     
     // Инициализация команд и обработчиков
     initChatCommands();
     setupBotEventHandlers();
     setupSpawnSystem();
-    setupTeamChangeHandler();
+
     
-    // При подключении игрока - добавляем его в команду
-    Players.OnPlayerConnected.Add(function(player) {
-        PlayersTeam.Add(player);
-        player.Properties.Get('ControlledBot').Value = 0;
-        player.Ui.Hint.Value = 'Добро пожаловать! Используйте /help для списка команд';
-        player.Spawns.Spawn();
-    });
-    
-    // Устанавливаем стартовое сообщение
-    player.Ui.Hint.Value = "Режим управления ботами! Используйте /bot для создания ботов";
-}
 
 // Запуск игры
 initGameMode();
