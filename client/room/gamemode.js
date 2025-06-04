@@ -11,6 +11,8 @@ Bots.PoolSize = 20; // Максимальное количество ботов
 // Создание единственной команды
 Teams.Add('Players', '<b>Players</b>', new Color(0.5, 0.5, 0.5, 1));
 const PlayersTeam = Teams.Get('Players');
+PlayersTeam.Build.BlocksSet.Value = BuildBlocksSet.Blue;
+PlayersTeam.Spawns.SpawnPointsGroups.Add(1);
 
 // Настройка лидерборда
 LeaderBoard.PlayerLeaderBoardValues = [
@@ -26,16 +28,7 @@ Players.OnPlayerConnected.Add(player => {
     player.Properties.Add('BotId', 0); // Для хранения ID бота
 });
 
-// Уничтожение ботов при отключении игрока
-Players.OnPlayerDisconnected.Add(player => {
-    const botId = player.Properties.Get('BotId').Value;
-    if (botId > 0) {
-        const bot = Bots.Get(botId);
-        if (bot) bot.Destroy();
-        playerBotMap.delete(player.id);
-        botPlayerMap.delete(botId);
-    }
-});
+
 
 
 // Таймер обновления позиций ботов
