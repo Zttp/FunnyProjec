@@ -6,13 +6,7 @@ const gameMode = {
     playerBots: new Map(), // Связь игроков с их ботами
     botSkins: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], // Доступные скины для ботов
     botWeapons: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], // Доступные оружия для ботов
-    spawnPoints: [
-        new Vector3(0, 10, 0),
-        new Vector3(10, 10, 10),
-        new Vector3(-10, 10, -10),
-        new Vector3(15, 10, 0),
-        new Vector3(0, 10, 15)
-    ],
+    spawnPoints: [], // Точки спавна будут заполнены позже
     PlayersTeam: null
 };
 
@@ -173,6 +167,11 @@ function createBot(player, skinId, weaponId) {
 
 // Возвращает случайную позицию спавна
 function getRandomSpawnPosition() {
+    if (gameMode.spawnPoints.length === 0) {
+        // Если точки спавна не определены, используем позицию игрока
+        return Players.All[0].Position.add(new Vector3(0, 0, 5));
+    }
+    
     const index = Math.floor(Math.random() * gameMode.spawnPoints.length);
     return gameMode.spawnPoints[index];
 }
@@ -219,14 +218,19 @@ function startBotControl(player, bot) {
             return;
         }
         
-        // Синхронизируем позицию, поворот и направление взгляда
-        bot.SetPositionAndDirection(
-            player.Position,
-            player.Controls.LookDirection.Value
-        );
-        
-        // Синхронизируем атаку
-        bot.Attack = player.Controls.Attack.Value;
+        try {
+            // Синхронизируем позицию, поворот и направление взгляда
+            bot.SetPositionAndDirection(
+                player.Position,
+                player.Controls.LookDirection.Value
+            );
+            
+            // Синхронизируем атаку
+            bot.Attack = player.Controls.Attack.Value;
+        } catch (e) {
+            console.error("Ошибка управления ботом:", e);
+            stopBotControl(player);
+        }
     });
     
     controlTimer.RestartLoop(0.05); // 20 раз в секунду
@@ -272,12 +276,18 @@ function setupBotEventHandlers() {
 
 // Настройка системы спавна
 function setupSpawnSystem() {
-    // Создаем точки спавна
+    // Получаем точки спавна, которые вы расставили в редакторе
     const spawnContext = Spawns.GetContext();
-    gameMode.spawnPoints.forEach((point, index) => {
-        spawnContext.SpawnPointsGroups.Add(index);
-        spawnContext.SpawnPointsGroups.Get(index).Points.Add(point);
-    });
+    
+    // Собираем все точки спавна из всех групп
+    for (const groupId of spawnContext.SpawnPointsGroups.AllIds) {
+        const group = spawnContext.SpawnPointsGroups.Get(groupId);
+        for (const point of group.Points) {
+            gameMode.spawnPoints.push(point);
+        }
+    }
+    
+    console.log(`Найдено ${gameMode.spawnPoints.length} точек спавна`);
     
     // Обработка спавна игрока
     spawnContext.OnSpawn.Add(function(player) {
@@ -306,7 +316,6 @@ function setupTeamChangeHandler() {
 function initGameMode() {
     // Создаем команду "Игроки"
     gameMode.PlayersTeam = Game.Teams.Add('Players', 'Игроки', new Color(0.2, 0.6, 1, 1));
-    gameMode.PlayersTeam.Spawns.SpawnPointsGroups.Add(1); // Группа спавна 0
     gameMode.PlayersTeam.Build.BlocksSet.Value = BuildBlocksSet.Blue;
     
     // Настраиваем свойства игрока
@@ -327,6 +336,13 @@ function initGameMode() {
         player.Properties.Get('Immortality').Value = false;
         player.Properties.Get('ControlledBot').Value = 0;
         player.Ui.Hint.Value = 'Добро пожаловать! Используйте /help для списка команд';
+        
+        // Если в комнате нет точек спавна, создаем временную
+        if (gameMode.spawnPoints.length === 0) {
+            console.warn("Точки спавна не найдены! Создаю временную точку");
+            gameMode.spawnPoints.push(new Vector3(0, 10, 0));
+        }
+        
         player.Spawns.Spawn();
     });
     
