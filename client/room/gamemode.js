@@ -12,7 +12,7 @@ const botPlayerMap = new Map();  // botId -> player
 Bots.PoolSize = BOTS_POOL_SIZE;
 
 // Создание единственной команды
-Teams.Add('Players', '<b>Players</b>', new Color(0.5, 0.5, 0.5, 1));
+Teams.Add('Players', 'Players', new Color(0.5, 0.5, 0.5, 1));
 const PlayersTeam = Teams.Get('Players');
 
 // Настройка лидерборда
@@ -26,19 +26,6 @@ LeaderBoard.PlayersWeightGetter.Set(p => p.Properties.Kills.Value);
 Players.OnPlayerConnected.Add(player => {
     PlayersTeam.Add(player);
     player.PopUp('Добро пожаловать! Команды: /bot(skin,weapon) /aye[id]');
-});
-
-// Обработчик спавна игрока
-Players.OnPlayerSpawned.Add(player => {
-    player.Properties.Immortality.Value = true;
-    Timers.GetContext(player).Get('immortality').Restart(RESPAWN_TIME);
-});
-
-// Таймер бессмертия при спавне
-Timers.OnPlayerTimer.Add(timer => {
-    if (timer.Id === 'immortality') {
-        timer.Player.Properties.Immortality.Value = false;
-    }
 });
 
 // Смерть игрока
@@ -57,30 +44,6 @@ Players.OnPlayerDisconnected.Add(player => {
     }
 });
 
-// Обработка смертей ботов
-Bots.OnBotDeath.Add(data => {
-    const playerId = botPlayerMap.get(data.Bot.Id);
-    if (playerId) {
-        const player = Players.GetById(playerId);
-        if (player) player.PopUp('Ваш бот уничтожен!');
-        
-        botPlayerMap.delete(data.Bot.Id);
-        playerBotMap.delete(playerId);
-    }
-    
-    if (data.Player) {
-        data.Player.Properties.Kills.Value++;
-    }
-});
-
-// Удаление ботов
-Bots.OnBotRemove.Add(bot => {
-    const playerId = botPlayerMap.get(bot.Id);
-    if (playerId) {
-        botPlayerMap.delete(bot.Id);
-        playerBotMap.delete(playerId);
-    }
-});
 
 // Таймер обновления позиций ботов
 const botUpdateTimer = Timers.GetContext().Get('BotUpdater');
