@@ -26,18 +26,6 @@ Players.OnPlayerConnected.Add(player => {
     player.Properties.Add('BotId', 0); // Для хранения ID бота
 });
 
-// Обработчик спавна игрока
-Spawns.GetContext().OnSpawn.Add(player => {
-    player.Properties.Immortality.Value = true;
-    player.Timers.Get('immortality').Restart(3);
-});
-
-// Смерть игрока
-Damage.OnDeath.Add(player => {
-    Spawns.GetContext(player).Spawn();
-    player.Properties.Deaths.Value++;
-});
-
 // Уничтожение ботов при отключении игрока
 Players.OnPlayerDisconnected.Add(player => {
     const botId = player.Properties.Get('BotId').Value;
@@ -49,16 +37,6 @@ Players.OnPlayerDisconnected.Add(player => {
     }
 });
 
-
-// Удаление ботов
-Bots.OnBotRemove.Add(bot => {
-    const playerId = botPlayerMap.get(bot.Id);
-    if (playerId) {
-        Players.GetById(playerId)?.Properties.Get('BotId').Value = 0;
-        botPlayerMap.delete(bot.Id);
-        playerBotMap.delete(playerId);
-    }
-});
 
 // Таймер обновления позиций ботов
 const botUpdateTimer = Timers.GetContext().Get('BotUpdater');
@@ -78,6 +56,106 @@ botUpdateTimer.OnTimer.Add(() => {
     }
 });
 botUpdateTimer.RestartLoop(0.05); // 20 раз в секунду
+
+// Обработчик команд чата
+Chat.OnMessage.Add(message => {
+    const text = message.Text.trim();
+    const player = Players.GetByRoomId(message.Sender);
+    
+    if (!player) return;
+    
+    // Создание бота
+    if (text.startsWith('/bot')) {
+        // Проверка формата команды
+        const match = text.match(/\/bot\((\d+),(\d+)\)/);
+        if (!match) {
+            player.PopUp('Используйте: /bot(skinId,weaponId)\nПример: /bot(1,1)');
+            return;
+        }
+        
+        const skinId = parseInt(match[1]);
+        const weaponId = parseInt(match[2]);
+        
+        // Проверка существующего бота
+        const currentBotId = player.Properties.Get('BotId').Value;
+        if (currentBotId > 0) {
+            player.PopUp('У вас уже есть бот! Сначала удалите текущего');
+            return;
+        }
+        
+        // Создание позиции для бота (над игроком)
+        const playerPos = player.Position.Value;
+        const spawnPos = new Vector3(playerPos.x, playerPos.y + 2, playerPos.z);
+        
+        // Создание бота
+        const bot = Bots.CreateHuman({
+            Position: spawnPos,
+            Rotation: player.Rotation.Value,
+            WeaponId: weaponId,
+            SkinId: skinId
+        });
+        
+        if (bot) {
+            player.Properties.Get('BotId').Value = bot.Id;
+            player.PopUp(`Бот создан! ID: ${bot.Id}\nУправление: /aye${bot.Id}`);
+        } else {
+            player.PopUp('Ошибка: не удалось создать бота');
+        }
+    }
+    // Управление ботом
+    else if (text.startsWith('/aye')) {
+        const parts = text.split(' ');
+        const currentBotId = player.Properties.Get('BotId').Value;
+        
+        // Отсоединение бота
+        if (parts.length === 1) {
+            if (currentBotId > 0) {
+                const bot = Bots.Get(currentBotId);
+                if (bot) {
+                    playerBotMap.delete(player.id);
+                    botPlayerMap.delete(bot.Id);
+                }
+                player.Properties.Get('BotId').Value = 0;
+                player.PopUp('Бот отсоединён');
+            }
+            return;
+        }
+        
+        // Присоединение бота
+        const botId = parseInt(parts[1]);
+        if (isNaN(botId)) {
+            player.PopUp('Неверный ID бота');
+            return;
+        }
+        
+        const bot = Bots.Get(botId);
+        if (!bot) {
+            player.PopUp('Бот не найден');
+            return;
+        }
+        
+        // Проверка владельца
+        if (player.Properties.Get('BotId').Value !== botId) {
+            player.PopUp('Это не ваш бот!');
+            return;
+        }
+        
+        // Привязка бота
+        playerBotMap.set(player.id, bot);
+        botPlayerMap.set(bot.Id, player.id);
+        player.PopUp(`Управление ботом ${botId}\nОстановка: /aye`);
+    }
+    // Справка
+    else if (text === '/help') {
+        player.PopUp('Команды ботов:\n' +
+            '/bot(skinId,weaponId) - создать бота\n' +
+            '/aye[botId] - управлять ботом\n' +
+            '/aye - остановить управление\n\n' +
+            'Примеры:\n' +
+            '/bot(1,1) - создать бота\n' +
+            '/aye123 - управлять ботом 123');
+    }
+});
 
 
 // Базовая настройка инвентаря
