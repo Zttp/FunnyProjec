@@ -1,11 +1,18 @@
 import { Vector3 } from 'pixel_combats/basic';
-import { Game, Players, Bots, Chat } from 'pixel_combats/room';
+import { Game, Players, Teams, Bots, Chat, Spawns, Timers, Properties } from 'pixel_combats/room';
 
 // Глобальные переменные
 const gameMode = {
     playerBots: new Map(), // Связь игроков с их ботами
     botSkins: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], // Доступные скины для ботов
-    botWeapons: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] // Доступные оружия для ботов
+    botWeapons: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], // Доступные оружия для ботов
+    spawnPoints: [
+        new Vector3(0, 10, 0),
+        new Vector3(10, 10, 10),
+        new Vector3(-10, 10, -10),
+        new Vector3(15, 10, 0),
+        new Vector3(0, 10, 15)
+    ]
 };
 
 // Инициализация чат-команд
@@ -24,7 +31,8 @@ function initChatCommands() {
 /aye - управлять ботом
 /botstop - перестать управлять ботом
 /botlist - список ваших ботов
-/botkill [id] - удалить бота`;
+/botkill [id] - удалить бота
+/tp [x] [y] [z] - телепортироваться`;
         }
         
         else if (command === '/bot') {
@@ -40,7 +48,7 @@ function initChatCommands() {
             // Парсим аргументы
             if (args.length >= 2) {
                 skinId = parseInt(args[1]);
-                if (isNaN(skinId) skinId = 0;
+                if (isNaN(skinId)) skinId = 0;
                 skinId = Math.max(0, Math.min(skinId, gameMode.botSkins.length - 1));
             }
             
@@ -116,14 +124,35 @@ function initChatCommands() {
                 sender.Ui.Hint.Value = `Бот ID: ${botId} не найден или не принадлежит вам!`;
             }
         }
+        
+        else if (command === '/tp') {
+            if (args.length < 4) {
+                sender.Ui.Hint.Value = "Использование: /tp [x] [y] [z]";
+                return;
+            }
+            
+            const x = parseFloat(args[1]);
+            const y = parseFloat(args[2]);
+            const z = parseFloat(args[3]);
+            
+            if (isNaN(x) || isNaN(y) || isNaN(z)) {
+                sender.Ui.Hint.Value = "Некорректные координаты!";
+                return;
+            }
+            
+            sender.SetPositionAndRotation(new Vector3(x, y, z), sender.Rotation);
+            sender.Ui.Hint.Value = `Телепортирован в (${x}, ${y}, ${z})`;
+        }
     });
 }
 
 // Создает бота для игрока
 function createBot(player, skinId, weaponId) {
+    const spawnPos = getRandomSpawnPosition();
+    
     const spawnData = {
-        Position: player.Position,
-        Rotation: player.Rotation,
+        Position: spawnPos,
+        Rotation: new Vector2(0, 0),
         WeaponId: weaponId,
         SkinId: skinId,
         LookAt: null
@@ -139,6 +168,12 @@ function createBot(player, skinId, weaponId) {
     gameMode.playerBots.get(player.id).push(bot);
     
     return bot;
+}
+
+// Возвращает случайную позицию спавна
+function getRandomSpawnPosition() {
+    const index = Math.floor(Math.random() * gameMode.spawnPoints.length);
+    return gameMode.spawnPoints[index];
 }
 
 // Уничтожает бота игрока
@@ -214,6 +249,9 @@ function setupBotEventHandlers() {
                 if (player) {
                     player.Ui.Hint.Value = `Ваш бот ID: ${data.Bot.Id} был убит!`;
                 }
+                
+                // Удаляем бота из списка
+                bots.splice(botIndex, 1);
                 break;
             }
         }
@@ -231,20 +269,67 @@ function setupBotEventHandlers() {
     });
 }
 
+// Настройка системы спавна
+function setupSpawnSystem() {
+    // Создаем точки спавна
+    const spawnContext = Spawns.GetContext();
+    gameMode.spawnPoints.forEach((point, index) => {
+        spawnContext.SpawnPointsGroups.Add(index);
+        spawnContext.SpawnPointsGroups.Get(index).Points.Add(point);
+    });
+    
+    // Обработка спавна игрока
+    spawnContext.OnSpawn.Add(function(player) {
+        // Включаем бессмертие на 3 секунды после спавна
+        player.Properties.Get('Immortality').Value = true;
+        
+        // Устанавливаем таймер для отключения бессмертия
+        const immortalityTimer = Timers.GetContext(player).Get('ImmortalityTimer');
+        immortalityTimer.OnTimer.Add(() => {
+            player.Properties.Get('Immortality').Value = false;
+        });
+        immortalityTimer.Restart(3);
+        
+        player.Ui.Hint.Value = "Бессмертие на 3 секунды!";
+    });
+}
+
+// Обработка смены команды
+function setupTeamChangeHandler() {
+    Teams.OnPlayerChangeTeam.Add(function(player) { 
+        player.Spawns.Spawn();
+    });
+}
+
 // Инициализация режима
 function initGameMode() {
-    // Настройка сервера
-    Game.Teams.Add('Players', 'Игроки', new Color(1, 1, 1, 1));
+    // Создаем команду "Игроки"
+    const playersTeam = Game.Teams.Add('Players', 'Игроки', new Color(0.2, 0.6, 1, 1));
+    playersTeam.Spawns.SpawnPointsGroups.Add(0); // Группа спавна 0
+    
+    // Настраиваем свойства игрока
+    Players.AllProperties.push(
+        Properties.Create('Immortality', false),
+        Properties.Create('ControlledBot', 0)
+    );
     
     // Инициализация команд и обработчиков
     initChatCommands();
     setupBotEventHandlers();
+    setupSpawnSystem();
+    setupTeamChangeHandler();
     
     // При подключении игрока - добавляем его в команду
     Players.OnPlayerConnected.Add(function(player) {
-        player.Team = Game.Teams.Get('Players');
+        player.Team = playersTeam;
+        player.Properties.Get('Immortality').Value = false;
+        player.Properties.Get('ControlledBot').Value = 0;
         player.Ui.Hint.Value = 'Добро пожаловать! Используйте /help для списка команд';
+        player.Spawns.Spawn();
     });
+    
+    // Устанавливаем стартовое сообщение
+    Game.Ui.Hint.Value = "Режим управления ботами! Используйте /bot для создания ботов";
 }
 
 // Запуск игры
