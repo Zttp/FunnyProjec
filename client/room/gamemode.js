@@ -1,44 +1,55 @@
-import { DisplayValueHeader, Color, Vector3 } from 'pixel_combats/basic';
-import { Game, Players, Teams, Damage, Spawns, Timers, Chat, Bots, Inventory } from 'pixel_combats/room';
+import { Vector3 } from 'pixel_combats/basic';
+import { Players, Teams, Spawns, Chat, Bots, Timers, Damage } from 'pixel_combats/room';
 
-// Сопоставление игроков и ботов
-const playerBotMap = new Map();  // playerId -> bot
-const botPlayerMap = new Map();  // botId -> playerId
+// Карта связей: playerId -> bot
+const playerBotMap = new Map();
 
-// Инициализация сервиса ботов
-Bots.PoolSize = 20; // Максимальное количество ботов
+// Инициализация ботов
+Bots.PoolSize = 20;
 
 // Создание единственной команды
-Teams.Add('Players', '<b>Players</b>', new Color(0.5, 0.5, 0.5, 1));
+Teams.Add('Players', 'Players', new Color(0.5, 0.5, 0.5, 1));
 const PlayersTeam = Teams.Get('Players');
-PlayersTeam.Build.BlocksSet.Value = BuildBlocksSet.Blue;
-PlayersTeam.Spawns.SpawnPointsGroups.Add(1);
+PlayersTeam.Spawns.SpawnPointsGroups.Add(1); // Добавляем группу точек спавна
 
-// Настройка лидерборда
-LeaderBoard.PlayerLeaderBoardValues = [
-    new DisplayValueHeader('Kills', '<b>Kills</b>', '<b>Kills</b>'),
-    new DisplayValueHeader('Deaths', '<b>Deaths</b>', '<b>Deaths</b>')
-];
-LeaderBoard.PlayersWeightGetter.Set(p => p.Properties.Kills.Value);
-
-// Обработчик подключения игроков
+// Обработчики игроков
 Players.OnPlayerConnected.Add(player => {
     PlayersTeam.Add(player);
-    player.PopUp('Добро пожаловать! Команды: /bot(skinId,weaponId) /aye[id]');
-    player.Properties.Add('BotId', 0); // Для хранения ID бота
+    player.PopUp('Добро пожаловать! Команды: /bot(skinId,weaponId) /aye /stop');
 });
 
+Players.OnPlayerDisconnected.Add(player => {
+    const bot = playerBotMap.get(player.id);
+    if (bot) {
+        bot.Destroy();
+        playerBotMap.delete(player.id);
+    }
+});
 
+Spawns.GetContext().OnSpawn.Add(player => {
+    player.Properties.Immortality.Value = true;
+    player.Timers.Get('immortality').Restart(3);
+});
 
+Timers.OnPlayerTimer.Add(timer => {
+    if (timer.Id === 'immortality') {
+        timer.Player.Properties.Immortality.Value = false;
+    }
+});
 
-// Таймер обновления позиций ботов
-const botUpdateTimer = Timers.GetContext().Get('BotUpdater');
-botUpdateTimer.OnTimer.Add(() => {
-    for (const [playerId, bot] of playerBotMap) {
+Damage.OnDeath.Add(player => {
+    Spawns.GetContext(player).Spawn();
+    player.Properties.Deaths.Value++;
+});
+
+// Основной таймер для управления ботами
+const updateTimer = Timers.GetContext().Get('BotUpdate');
+updateTimer.OnTimer.Add(() => {
+    playerBotMap.forEach((bot, playerId) => {
         const player = Players.GetById(playerId);
-        if (!player || !bot.Alive) continue;
+        if (!player || !bot.Alive) return;
         
-        // Обновляем позицию и поворот бота
+        // Копируем позицию и поворот игрока
         const pos = player.Position.Value;
         const rot = player.Rotation.Value;
         
@@ -46,41 +57,32 @@ botUpdateTimer.OnTimer.Add(() => {
             new Vector3(pos.x, pos.y, pos.z),
             new Vector3(rot.x, rot.y, rot.z)
         );
-    }
+    });
 });
-botUpdateTimer.RestartLoop(0.05); // 20 раз в секунду
+updateTimer.RestartLoop(0.05); // 20 раз в секунду
 
-// Обработчик команд чата
+// Обработка команд чата
 Chat.OnMessage.Add(message => {
     const text = message.Text.trim();
     const player = Players.GetByRoomId(message.Sender);
-    
     if (!player) return;
     
     // Создание бота
     if (text.startsWith('/bot')) {
-        // Проверка формата команды
         const match = text.match(/\/bot\((\d+),(\d+)\)/);
         if (!match) {
-            player.PopUp('Используйте: /bot(skinId,weaponId)\nПример: /bot(1,1)');
+            player.PopUp('Формат: /bot(skinId,weaponId)\nПример: /bot(1,1)');
             return;
         }
         
         const skinId = parseInt(match[1]);
         const weaponId = parseInt(match[2]);
         
-        // Проверка существующего бота
-        const currentBotId = player.Properties.Get('BotId').Value;
-        if (currentBotId > 0) {
-            player.PopUp('У вас уже есть бот! Сначала удалите текущего');
-            return;
-        }
-        
-        // Создание позиции для бота (над игроком)
+        // Позиция над игроком
         const playerPos = player.Position.Value;
         const spawnPos = new Vector3(playerPos.x, playerPos.y + 2, playerPos.z);
         
-        // Создание бота
+        // Создаем бота
         const bot = Bots.CreateHuman({
             Position: spawnPos,
             Rotation: player.Rotation.Value,
@@ -89,32 +91,19 @@ Chat.OnMessage.Add(message => {
         });
         
         if (bot) {
-            player.Properties.Get('BotId').Value = bot.Id;
-            player.PopUp(`Бот создан! ID: ${bot.Id}\nУправление: /aye${bot.Id}`);
+            player.PopUp(`Бот создан! ID: ${bot.Id}`);
         } else {
-            player.PopUp('Ошибка: не удалось создать бота');
+            player.PopUp('Ошибка создания бота');
         }
     }
-    // Управление ботом
+    // Начало управления ботом
     else if (text.startsWith('/aye')) {
         const parts = text.split(' ');
-        const currentBotId = player.Properties.Get('BotId').Value;
-        
-        // Отсоединение бота
-        if (parts.length === 1) {
-            if (currentBotId > 0) {
-                const bot = Bots.Get(currentBotId);
-                if (bot) {
-                    playerBotMap.delete(player.id);
-                    botPlayerMap.delete(bot.Id);
-                }
-                player.Properties.Get('BotId').Value = 0;
-                player.PopUp('Бот отсоединён');
-            }
+        if (parts.length < 2) {
+            player.PopUp('Укажите ID бота: /aye [botId]');
             return;
         }
         
-        // Присоединение бота
         const botId = parseInt(parts[1]);
         if (isNaN(botId)) {
             player.PopUp('Неверный ID бота');
@@ -127,35 +116,39 @@ Chat.OnMessage.Add(message => {
             return;
         }
         
-        // Проверка владельца
-        if (player.Properties.Get('BotId').Value !== botId) {
-            player.PopUp('Это не ваш бот!');
-            return;
+        // Удаляем предыдущего бота игрока
+        const currentBot = playerBotMap.get(player.id);
+        if (currentBot) {
+            currentBot.Destroy();
         }
         
-        // Привязка бота
+        // Устанавливаем нового бота
         playerBotMap.set(player.id, bot);
-        botPlayerMap.set(bot.Id, player.id);
-        player.PopUp(`Управление ботом ${botId}\nОстановка: /aye`);
+        player.PopUp(`Управление ботом ${botId}`);
+    }
+    // Остановка управления
+    else if (text === '/stop') {
+        const bot = playerBotMap.get(player.id);
+        if (bot) {
+            bot.Destroy();
+            playerBotMap.delete(player.id);
+            player.PopUp('Управление остановлено');
+        }
     }
     // Справка
     else if (text === '/help') {
-        player.PopUp('Команды ботов:\n' +
+        player.PopUp('Команды:\n' +
             '/bot(skinId,weaponId) - создать бота\n' +
-            '/aye[botId] - управлять ботом\n' +
-            '/aye - остановить управление\n\n' +
-            'Примеры:\n' +
-            '/bot(1,1) - создать бота\n' +
-            '/aye123 - управлять ботом 123');
+            '/aye [botId] - управлять ботом\n' +
+            '/stop - остановить управление');
     }
 });
 
-
 // Базовая настройка инвентаря
-const Inv = Inventory.GetContext();
-Inv.Secondary.Value = true;
-Inv.SecondaryInfinity.Value = true;
-Inv.Melee.Value = true;
+Inventory.GetContext().Secondary.Value = true;
+Inventory.GetContext().SecondaryInfinity.Value = true;
+Inventory.GetContext().Melee.Value = true;
 
 // Настройка урона
 Damage.GetContext().DamageOut.Value = true;
+Damage.GetContext().FriendlyFire.Value = true;
