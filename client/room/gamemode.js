@@ -263,19 +263,13 @@ function setupBotEventHandlers() {
 }
 
 
-// Обработка смены команды
-function setupTeamChangeHandler() {
-    Teams.OnPlayerChangeTeam.Add(function(player) { 
-        player.Spawns.Spawn();
-    });
-}
 
 // Инициализация режима
 function initGameMode() {
-    // Создаем команду "Игроки"
-    const playersTeam = Game.Teams.Add('Players', 'Игроки', new Color(0.2, 0.6, 1, 1));
-    playersTeam.Spawns.SpawnPointsGroups.Add(0); // Группа спавна 0
-    
+    Teams.Add('Players', 'Игроки', new Color(0.5, 0.5, 0.5, 1));
+    PlayersTeam = Teams.Get('Players');
+    PlayersTeam.Spawns.SpawnPointsGroups.Add(1);
+    PlayersTeam.Build.BlocksSet.Value = BuildBlocksSet.Blue;
     
     // Инициализация команд и обработчиков
     initChatCommands();
@@ -285,7 +279,7 @@ function initGameMode() {
     
     // При подключении игрока - добавляем его в команду
     Players.OnPlayerConnected.Add(function(player) {
-        player.Team = playersTeam;
+        PlayersTeam.Add(player);
         player.Properties.Get('ControlledBot').Value = 0;
         player.Ui.Hint.Value = 'Добро пожаловать! Используйте /help для списка команд';
         player.Spawns.Spawn();
