@@ -1,349 +1,152 @@
-import { Vector3 } from 'pixel_combats/basic';
-import { Game, Players, Teams, Bots, Chat, Spawns, Timers, Properties, BuildBlocksSet } from 'pixel_combats/room';
+// Импорт модулей
+import * as Basic from 'pixel_combats/basic';
+import * as API from 'pixel_combats/room';
+import { Players } from 'pixel_combats/room';
+import { Game, Players, Teams, Spawns } from 'pixel_combats/room';
 
-// Глобальные переменные
-const gameMode = {
-    playerBots: new Map(), // Связь игроков с их ботами
-    botSkins: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], // Доступные скины для ботов
-    botWeapons: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], // Доступные оружия для ботов
-    spawnPoints: [], // Точки спавна будут заполнены позже
-    PlayersTeam: null
-};
+// Создаем команду игроков
+let PlayersTeam = Teams.Create("players", { 
+    name: "Игроки", 
+    undername: "Bot Control",
+    color: Basic.Color.Blue
+});
 
-// Инициализация чат-команд
-function initChatCommands() {
-    Chat.OnMessage.Add(function(m) {
-        const msg = m.Text.trim();
-        const sender = Players.GetByRoomId(m.Sender);
-        if (!sender) return;
+// Настройки режима
+API.BreackGraph.OnlyPlayerBlocksDmg = true;
+API.Spawns.GetContext().RespawnTime.Value = 0;
+API.Build.GetContext().FlyEnable.Value = true;
+API.Build.GetContext().BuildModeEnable.Value = false;
+PlayersTeam.Damage.DamageIn.Value = false;
 
-        const args = msg.split(' ');
-        const command = args[0].toLowerCase();
+// Переменные для управления ботами
+const Bots = API.Bots;
+let playerBots = {}; // { playerId: botId }
+let controlledBots = {}; // { playerId: botId }
 
-        if (command === '/help') {
-            sender.Ui.Hint.Value = `Доступные команды:
-/bot [skinId] [weaponId] - создать бота
-/aye - управлять ботом
-/botstop - перестать управлять ботом
-/botlist - список ваших ботов
-/botkill [id] - удалить бота
-/tp [x] [y] [z] - телепортироваться`;
-        }
-        
-        else if (command === '/bot') {
-            // Проверяем, не имеет ли игрок уже слишком много ботов
-            if (getPlayerBotsCount(sender.id) >= 3) {
-                sender.Ui.Hint.Value = "У вас уже максимальное количество ботов (3)!";
-                return;
-            }
-            
-            let skinId = 0;
-            let weaponId = 0;
-            
-            // Парсим аргументы
-            if (args.length >= 2) {
-                skinId = parseInt(args[1]);
-                if (isNaN(skinId)) skinId = 0;
-                skinId = Math.max(0, Math.min(skinId, gameMode.botSkins.length - 1));
-            }
-            
-            if (args.length >= 3) {
-                weaponId = parseInt(args[2]);
-                if (isNaN(weaponId)) weaponId = 0;
-                weaponId = Math.max(0, Math.min(weaponId, gameMode.botWeapons.length - 1));
-            }
-            
-            // Создаем бота
-            const bot = createBot(sender, skinId, weaponId);
-            if (bot) {
-                sender.Ui.Hint.Value = `Бот создан! ID: ${bot.Id}`;
-            } else {
-                sender.Ui.Hint.Value = "Ошибка при создании бота!";
-            }
-        }
-        
-        else if (command === '/aye') {
-            // Находим первого живого бота игрока
-            const bots = getPlayerBots(sender.id);
-            const aliveBot = bots.find(b => b.Alive);
-            
-            if (!aliveBot) {
-                sender.Ui.Hint.Value = "У вас нет живых ботов! Создайте бота командой /bot";
-                return;
-            }
-            
-            // Начинаем управление ботом
-            startBotControl(sender, aliveBot);
-            sender.Ui.Hint.Value = `Вы теперь управляете ботом ID: ${aliveBot.Id}`;
-        }
-        
-        else if (command === '/botstop') {
-            // Прекращаем управление ботом
-            stopBotControl(sender);
-            sender.Ui.Hint.Value = "Вы перестали управлять ботом";
-        }
-        
-        else if (command === '/botlist') {
-            // Показываем список ботов игрока
-            const bots = getPlayerBots(sender.id);
-            if (bots.length === 0) {
-                sender.Ui.Hint.Value = "У вас нет ботов!";
-                return;
-            }
-            
-            let botList = "Ваши боты:\n";
-            bots.forEach(bot => {
-                botList += `ID: ${bot.Id} | Скин: ${bot.SkinId} | Оружие: ${bot.WeaponId} | ${bot.Alive ? "Жив" : "Мертв"}\n`;
-            });
-            
-            sender.Ui.Hint.Value = botList;
-        }
-        
-        else if (command === '/botkill') {
-            if (args.length < 2) {
-                sender.Ui.Hint.Value = "Использование: /botkill [id]";
-                return;
-            }
-            
-            const botId = parseInt(args[1]);
-            if (isNaN(botId)) {
-                sender.Ui.Hint.Value = "Некорректный ID бота!";
-                return;
-            }
-            
-            // Удаляем бота
-            const success = destroyPlayerBot(sender.id, botId);
-            if (success) {
-                sender.Ui.Hint.Value = `Бот ID: ${botId} удален!`;
-            } else {
-                sender.Ui.Hint.Value = `Бот ID: ${botId} не найден или не принадлежит вам!`;
-            }
-        }
-        
-        else if (command === '/tp') {
-            if (args.length < 4) {
-                sender.Ui.Hint.Value = "Использование: /tp [x] [y] [z]";
-                return;
-            }
-            
-            const x = parseFloat(args[1]);
-            const y = parseFloat(args[2]);
-            const z = parseFloat(args[3]);
-            
-            if (isNaN(x) || isNaN(y) || isNaN(z)) {
-                sender.Ui.Hint.Value = "Некорректные координаты!";
-                return;
-            }
-            
-            sender.SetPositionAndRotation(new Vector3(x, y, z), sender.Rotation);
-            sender.Ui.Hint.Value = `Телепортирован в (${x}, ${y}, ${z})`;
-        }
-    });
-}
+// Обработчик подключения игрока
+API.Players.OnPlayerConnected.Add(function(p) {
+    PlayersTeam.Add(p);
+    p.Spawns.Spawn();
+});
 
-// Создает бота для игрока
-function createBot(player, skinId, weaponId) {
-    const spawnPos = getRandomSpawnPosition();
+// Управление ботами
+globalThis.bot = function(skinId = 11, weaponId = 0) {
+    const player = API.GetPlayer();
+    if (!player) return;
     
+    // Удаляем предыдущего бота игрока
+    if (playerBots[player.Id]) {
+        const oldBot = Bots.Get(playerBots[player.Id]);
+        if (oldBot) oldBot.Destroy();
+    }
+    
+    // Создаем нового бота
     const spawnData = {
-        Position: spawnPos,
-        Rotation: new Vector2(0, 0),
+        Position: player.Position,
+        Rotation: player.Rotation,
         WeaponId: weaponId,
-        SkinId: skinId,
-        LookAt: null
+        SkinId: skinId
     };
     
-    const bot = Bots.CreateHuman(spawnData);
-    if (!bot) return null;
-    
-    // Сохраняем связь бота с игроком
-    if (!gameMode.playerBots.has(player.id)) {
-        gameMode.playerBots.set(player.id, []);
+    const newBot = Bots.CreateHuman(spawnData);
+    if (newBot) {
+        playerBots[player.Id] = newBot.Id;
+        player.PopUp(`Бот создан! ID: ${newBot.Id}`);
     }
-    gameMode.playerBots.get(player.id).push(bot);
-    
-    return bot;
-}
+};
 
-// Возвращает случайную позицию спавна
-function getRandomSpawnPosition() {
-    if (gameMode.spawnPoints.length === 0) {
-        // Если точки спавна не определены, используем позицию игрока
-        return Players.All[0].Position.add(new Vector3(0, 0, 5));
+globalThis.aye = function(botId) {
+    const player = API.GetPlayer();
+    if (!player) return;
+    
+    const bot = Bots.Get(botId);
+    if (bot) {
+        controlledBots[player.Id] = botId;
+        player.PopUp(`Управление ботом ${botId} активировано!`);
     }
-    
-    const index = Math.floor(Math.random() * gameMode.spawnPoints.length);
-    return gameMode.spawnPoints[index];
-}
+};
 
-// Уничтожает бота игрока
-function destroyPlayerBot(playerId, botId) {
-    if (!gameMode.playerBots.has(playerId)) return false;
+globalThis.uncontrol = function() {
+    const player = API.GetPlayer();
+    if (!player) return;
     
-    const bots = gameMode.playerBots.get(playerId);
-    const botIndex = bots.findIndex(b => b.Id === botId);
-    
-    if (botIndex === -1) return false;
-    
-    const bot = bots[botIndex];
-    bot.Destroy();
-    bots.splice(botIndex, 1);
-    
-    return true;
-}
+    if (controlledBots[player.Id]) {
+        delete controlledBots[player.Id];
+        player.PopUp("Управление ботом отключено!");
+    }
+};
 
-// Получает всех ботов игрока
-function getPlayerBots(playerId) {
-    return gameMode.playerBots.get(playerId) || [];
-}
-
-// Получает количество ботов игрока
-function getPlayerBotsCount(playerId) {
-    return getPlayerBots(playerId).length;
-}
-
-// Начинает управление ботом
-function startBotControl(player, bot) {
-    // Останавливаем предыдущее управление, если было
-    stopBotControl(player);
-    
-    // Сохраняем текущее управление
-    player.Properties.Get('ControlledBot').Value = bot.Id;
-    
-    // Создаем таймер для синхронизации позиции
-    const controlTimer = Timers.GetContext(player).Get("BotControl");
-    controlTimer.OnTimer.Add(() => {
-        if (!bot || !bot.Alive) {
-            stopBotControl(player);
-            return;
-        }
+// Обновление ботов в игровом цикле
+function gameTick() {
+    // Обновляем контролируемых ботов
+    for (const [playerId, botId] of Object.entries(controlledBots)) {
+        const player = Players.GetById(playerId);
+        const bot = Bots.Get(botId);
         
-        try {
-            // Синхронизируем позицию, поворот и направление взгляда
+        if (player && player.IsOnline && bot && bot.Alive) {
             bot.SetPositionAndDirection(
                 player.Position,
-                player.Controls.LookDirection.Value
+                player.LookDirection
             );
-            
-            // Синхронизируем атаку
-            bot.Attack = player.Controls.Attack.Value;
-        } catch (e) {
-            console.error("Ошибка управления ботом:", e);
-            stopBotControl(player);
-        }
-    });
-    
-    controlTimer.RestartLoop(0.05); // 20 раз в секунду
-}
-
-// Прекращает управление ботом
-function stopBotControl(player) {
-    player.Properties.Get('ControlledBot').Value = 0;
-    const controlTimer = Timers.GetContext(player).Get("BotControl");
-    if (controlTimer) controlTimer.Stop();
-}
-
-// Обработчик события смерти бота
-function setupBotEventHandlers() {
-    Bots.OnBotDeath.Add(function(data) {
-        // Находим игрока, которому принадлежал бот
-        for (const [playerId, bots] of gameMode.playerBots) {
-            const botIndex = bots.findIndex(b => b.Id === data.Bot.Id);
-            if (botIndex !== -1) {
-                const player = Players.Get(playerId);
-                if (player) {
-                    player.Ui.Hint.Value = `Ваш бот ID: ${data.Bot.Id} был убит!`;
-                }
-                
-                // Удаляем бота из списка
-                bots.splice(botIndex, 1);
-                break;
-            }
-        }
-    });
-    
-    Bots.OnBotRemove.Add(function(bot) {
-        // Удаляем бота из списков игроков
-        for (const [playerId, bots] of gameMode.playerBots) {
-            const botIndex = bots.findIndex(b => b.Id === bot.Id);
-            if (botIndex !== -1) {
-                bots.splice(botIndex, 1);
-                break;
-            }
-        }
-    });
-}
-
-// Настройка системы спавна
-function setupSpawnSystem() {
-    // Получаем точки спавна, которые вы расставили в редакторе
-    const spawnContext = Spawns.GetContext();
-    
-    // Собираем все точки спавна из всех групп
-    for (const groupId of spawnContext.SpawnPointsGroups.AllIds) {
-        const group = spawnContext.SpawnPointsGroups.Get(groupId);
-        for (const point of group.Points) {
-            gameMode.spawnPoints.push(point);
+            bot.Attack = player.Attack;
         }
     }
     
-    console.log(`Найдено ${gameMode.spawnPoints.length} точек спавна`);
+    // Обновляем обычных ботов
+    for (const [playerId, botId] of Object.entries(playerBots)) {
+        const player = Players.GetById(playerId);
+        const bot = Bots.Get(botId);
+        
+        if (!bot || !bot.Alive) {
+            delete playerBots[playerId];
+            if (controlledBots[playerId]) delete controlledBots[playerId];
+        }
+    }
     
-    // Обработка спавна игрока
-    spawnContext.OnSpawn.Add(function(player) {
-        // Включаем бессмертие на 3 секунды после спавна
-        player.Properties.Get('Immortality').Value = true;
-        
-        // Устанавливаем таймер для отключения бессмертия
-        const immortalityTimer = Timers.GetContext(player).Get('ImmortalityTimer');
-        immortalityTimer.OnTimer.Add(() => {
-            player.Properties.Get('Immortality').Value = false;
-        });
-        immortalityTimer.Restart(3);
-        
-        player.Ui.Hint.Value = "Бессмертие на 3 секунды!";
-    });
+    API.Timers.Get("botControl").Restart(0.05, gameTick);
 }
 
-// Обработка смены команды
-function setupTeamChangeHandler() {
-    Teams.OnPlayerChangeTeam.Add(function(player) { 
-        player.Spawns.Spawn();
-    });
-}
+// Запускаем игровой цикл
+gameTick();
 
-// Инициализация режима
-function initGameMode() {
-    // Создаем команду "Игроки"
-    PlayersTeam = Teams.Add('Players', 'Игроки', new Color(0.2, 0.6, 1, 1));
-    PlayersTeam.Build.BlocksSet.Value = BuildBlocksSet.Blue;
-    PlayersTeam.Spawns.SpawnPointsGroups.Add(1);
-    
-    // Настраиваем свойства игрока
-    Players.AllProperties.push(
-        Properties.Create('ControlledBot', 0)
-    );
-    
-    // Инициализация команд и обработчиков
-    initChatCommands();
-    setupBotEventHandlers();
-    setupSpawnSystem();
-    setupTeamChangeHandler();
-    
-    // При подключении игрока - добавляем его в команду
-    Players.OnPlayerConnected.Add(function(player) {
-        player.Team = gameMode.PlayersTeam;
-        player.Properties.Get('Immortality').Value = false;
-        player.Properties.Get('ControlledBot').Value = 0;
-        player.Ui.Hint.Value = 'Добро пожаловать! Используйте /help для списка команд';
-        
-        
-        player.Spawns.Spawn();
-    });
-    
-    // Устанавливаем стартовое сообщение
-    player.Ui.Hint.Value = "Режим управления ботами! Используйте /bot для создания ботов";
-}
+// Обработчик чата для команд
+API.Chat.OnMessage.Add(function(message) {
+    if (message.Text.startsWith("/")) {
+        const command = message.Text.slice(1);
+        try {
+            new Function(command)();
+        } catch (e) {
+            API.Ui.GetContext().Hint.Value = `Ошибка: ${e.message}`;
+        }
+    }
+});
 
-// Запуск игры
-initGameMode();
+// Лидерборд
+API.LeaderBoard.PlayerLeaderBoardValues = [
+    {
+        Value: "botId",
+        DisplayName: "ID бота",
+        ShortDisplayName: "Бот"
+    }
+];
+
+// Обновляем информацию о боте в лидерборде
+API.Players.OnPlayerConnected.Add(function(p) {
+    p.Properties.Get("botId").Value = "Нет";
+});
+
+// Обработчик смерти ботов
+Bots.OnBotDeath.Add(function(data) {
+    for (const [playerId, botId] of Object.entries(playerBots)) {
+        if (botId === data.Bot.Id) {
+            const player = Players.GetById(playerId);
+            if (player) {
+                player.Properties.Get("botId").Value = "Убит";
+                player.PopUp("Ваш бот уничтожен!");
+            }
+            delete playerBots[playerId];
+            if (controlledBots[playerId]) delete controlledBots[playerId];
+            break;
+        }
+    }
+});
