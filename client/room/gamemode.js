@@ -1,11 +1,19 @@
 import { Vector3 } from 'pixel_combats/basic';
-import { Game, Players, Teams, Bots, Chat, Spawns, Timers, Properties } from 'pixel_combats/room';
+import { Game, Players, Teams, Bots, Chat, Spawns, Timers, Properties, BuildBlocksSet } from 'pixel_combats/room';
 
 // Глобальные переменные
 const gameMode = {
     playerBots: new Map(), // Связь игроков с их ботами
     botSkins: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], // Доступные скины для ботов
     botWeapons: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], // Доступные оружия для ботов
+    spawnPoints: [
+        new Vector3(0, 10, 0),
+        new Vector3(10, 10, 10),
+        new Vector3(-10, 10, -10),
+        new Vector3(15, 10, 0),
+        new Vector3(0, 10, 15)
+    ],
+    PlayersTeam: null
 };
 
 // Инициализация чат-команд
@@ -262,29 +270,69 @@ function setupBotEventHandlers() {
     });
 }
 
+// Настройка системы спавна
+function setupSpawnSystem() {
+    // Создаем точки спавна
+    const spawnContext = Spawns.GetContext();
+    gameMode.spawnPoints.forEach((point, index) => {
+        spawnContext.SpawnPointsGroups.Add(index);
+        spawnContext.SpawnPointsGroups.Get(index).Points.Add(point);
+    });
+    
+    // Обработка спавна игрока
+    spawnContext.OnSpawn.Add(function(player) {
+        // Включаем бессмертие на 3 секунды после спавна
+        player.Properties.Get('Immortality').Value = true;
+        
+        // Устанавливаем таймер для отключения бессмертия
+        const immortalityTimer = Timers.GetContext(player).Get('ImmortalityTimer');
+        immortalityTimer.OnTimer.Add(() => {
+            player.Properties.Get('Immortality').Value = false;
+        });
+        immortalityTimer.Restart(3);
+        
+        player.Ui.Hint.Value = "Бессмертие на 3 секунды!";
+    });
+}
 
-Teams.Add('Players', 'Игроки', new Color(0.5, 0.5, 0.5, 1));
-    PlayersTeam = Teams.Get('Players');
-    PlayersTeam.Spawns.SpawnPointsGroups.Add(1);
-    PlayersTeam.Build.BlocksSet.Value = BuildBlocksSet.Blue;
-});
+// Обработка смены команды
+function setupTeamChangeHandler() {
+    Teams.OnPlayerChangeTeam.Add(function(player) { 
+        player.Spawns.Spawn();
+    });
+}
 
-// При подключении игрока - добавляем его в команду
-Players.OnPlayerConnected.Add(function(player) {
-    PlayersTeam.Add(player);
-    player.Properties.Get('ControlledBot').Value = 0;
-    player.Ui.Hint.Value = 'Добро пожаловать! Используйте /help для списка команд';
-    player.Spawns.Spawn();
-});
 // Инициализация режима
 function initGameMode() {
+    // Создаем команду "Игроки"
+    gameMode.PlayersTeam = Game.Teams.Add('Players', 'Игроки', new Color(0.2, 0.6, 1, 1));
+    gameMode.PlayersTeam.Spawns.SpawnPointsGroups.Add(1); // Группа спавна 0
+    gameMode.PlayersTeam.Build.BlocksSet.Value = BuildBlocksSet.Blue;
+    
+    // Настраиваем свойства игрока
+    Players.AllProperties.push(
+        Properties.Create('Immortality', false),
+        Properties.Create('ControlledBot', 0)
+    );
     
     // Инициализация команд и обработчиков
     initChatCommands();
     setupBotEventHandlers();
     setupSpawnSystem();
-
+    setupTeamChangeHandler();
     
+    // При подключении игрока - добавляем его в команду
+    Players.OnPlayerConnected.Add(function(player) {
+        player.Team = gameMode.PlayersTeam;
+        player.Properties.Get('Immortality').Value = false;
+        player.Properties.Get('ControlledBot').Value = 0;
+        player.Ui.Hint.Value = 'Добро пожаловать! Используйте /help для списка команд';
+        player.Spawns.Spawn();
+    });
+    
+    // Устанавливаем стартовое сообщение
+    Game.Ui.Hint.Value = "Режим управления ботами! Используйте /bot для создания ботов";
+}
 
 // Запуск игры
 initGameMode();
